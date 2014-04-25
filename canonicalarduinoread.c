@@ -1,14 +1,6 @@
-/* www.chrisheydrick.com
-     
-   June 23 2012
-
-   CanonicalArduinoRead write a byte to an Arduino, and then
-   receives a serially transmitted string in response.
-
-   The call/response Arduino sketch is here:
-   https://gist.github.com/2980344
-
-   Arduino sketch details at www.chrisheydrick.com
+/*  
+	A fork of CanonicalArduinoRead by Chris Heydrick
+	www.chrisheydrick.com
 */
 
 #include <stdlib.h>
@@ -22,53 +14,85 @@
 #include <sys/ioctl.h>
 
 #define DEBUG 1
-  
-int main(int argc, char *argv[])
-{
-  int fd, n, i;
-  char buf[64] = "temp text";
-  struct termios toptions;
 
-  /* open serial port */
-  fd = open("/dev/ttyACM0", O_RDWR | O_NOCTTY);
-  printf("fd opened as %i\n", fd);
-  
-  /* wait for the Arduino to reboot */
-  usleep(3500000);
-  
-  /* get current serial port settings */
-  tcgetattr(fd, &toptions);
-  /* set 9600 baud both ways */
-  cfsetispeed(&toptions, B9600);
-  cfsetospeed(&toptions, B9600);
-  /* 8 bits, no parity, no stop bits */
-  toptions.c_cflag &= ~PARENB;
-  toptions.c_cflag &= ~CSTOPB;
-  toptions.c_cflag &= ~CSIZE;
-  toptions.c_cflag |= CS8;
-  /* Canonical mode */
-  toptions.c_lflag |= ICANON;
-  /* commit the serial port settings */
-  tcsetattr(fd, TCSANOW, &toptions);
+int setup(int * pfd, char * tty_dev, int baud){
+    struct termios toptions;
 
-  /* Send byte to trigger Arduino to send string back */
-  write(fd, "0", 1);
-  /* Receive string from Arduino */
-  n = read(fd, buf, 64);
-  /* insert terminating zero in the string */
-  buf[n] = 0;
+    /* open serial port */
+    *pfd = open(tty_dev, O_RDWR | O_NOCTTY);
+    printf("%s opened as %i\n", tty_dev, *pfd);
 
-  printf("%i bytes read, buffer contains: %s\n", n, buf);
- 
-  if(DEBUG)
-    {
-      printf("Printing individual characters in buf as integers...\n\n");
-      for(i=0; i<n; i++)
-	{
-	  printf("Byte %i:%i, ",i+1, (int)buf[i]);
-	}
-      printf("\n");
+    /* wait for the Arduino to reboot */
+    usleep(3500000);
+
+    /* Choose the right baud rate identifier */
+    speed_t br;
+	switch (baud) {
+    case 9600:   br = B9600;   break;
+    case 19200:  br = B19200;  break;
+    case 38400:  br = B38400;  break;
+    case 57600:  br = B57600;  break;
+    case 115200: br = B115200; break;
+    default:	 
+    	printf("Unknown baud rate\n");
+    	printf("Using default of 9600\n");
+    	br = B9600;
+    	break;
+    }
+    printf("Baud rate %d\n", baud);
+
+    /* get current serial port settings */
+    tcgetattr(*pfd, &toptions);
+    /* set baud rate both ways */
+    cfsetispeed(&toptions, br);
+    cfsetospeed(&toptions, br);
+    /* 8 bits, no parity, no stop bits */
+    toptions.c_cflag &= ~PARENB;
+    toptions.c_cflag &= ~CSTOPB;
+    toptions.c_cflag &= ~CSIZE;
+    toptions.c_cflag |= CS8;
+    /* Canonical mode */
+    /* i.e. line buffering - chars will not come through until a \n is sent */
+    // toptions.c_lflag |= ICANON;
+    /* Non-canonical mode */
+    toptions.c_lflag &= ~ICANON;
+    /* commit the serial port settings */
+    tcsetattr(*pfd, TCSANOW, &toptions);
+
+}
+
+int available(const int fd){
+    int n = 0;
+    ioctl(fd, FIONREAD, &n);
+
+    return n;
+}
+
+int main(int argc, char *argv[]){
+
+    int fd, n, i;
+    char buf[64] = "temp text";
+
+    if(argc < 3){
+    	printf("Usage: %s <tty> <baudrate>\n", argv[0]);
+    	return 0;
     }
 
-  return 0;
+    setup(&fd, argv[1], atoi(argv[2]));
+
+    //Send initial character to begin back-and-forth
+    write(fd, "Z", 1);
+    //The arduino will respond with the next character
+    //of the alphabet (wrapped)
+
+    while(1){
+    	if(available(fd)){
+	    	n = read(fd, buf, 63); //read up to 63 chars
+	    	buf[n] = 0; //set null terminator
+	    	printf("%d bytes: %s\n", n, buf);
+	    	write(fd, buf, 1);
+    	}
+    }
+
+    return 0;
 }
